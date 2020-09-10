@@ -1,4 +1,7 @@
 use elf_utilities::{segment, header, symbol};
+use std::io::BufWriter;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 
 const PAGE_SIZE: u64 = 0x1000;
 const BASE_CODE_ADDRESS: u64 = 0x400000;
@@ -26,6 +29,25 @@ pub fn static_link_with(obj_file: elf_utilities::file::ELF64){
     linker.add_null_byte_to_null_section();
 
     linker.update_ehdr();
+
+    let bytes = linker.file.to_le_bytes();
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(0o755)
+        .open("a.out")
+        .unwrap();
+    let mut writer = BufWriter::new(file);
+    match writer.write_all(&bytes) {
+        Ok(_) => (),
+        Err(e) => eprintln!("{}", e),
+    }
+    match writer.flush() {
+        Ok(_) => (),
+        Err(e) => eprintln!("{}", e),
+    }
 }
 
 struct StaticLinker {
@@ -220,10 +242,6 @@ impl StaticLinker {
     fn update_entry_point(&mut self, entry: elf_utilities::Elf64Addr) {
         let ehdr = self.file.get_ehdr_as_mut();
         ehdr.set_entry(entry);
-    }
-
-    fn give_file(self) -> elf_utilities::file::ELF64 {
-        self.file
     }
 
     fn init_code_segment(&mut self) -> segment::Segment64 {
