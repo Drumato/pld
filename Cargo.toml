@@ -1,0 +1,17 @@
+[package]
+name = "x64_static_linker"
+version = "0.1.36"
+authors = ["Drumato <drumatech109@gmail.com>"]
+edition = "2018"
+license = "MIT"
+description = "x86_64 static linker"
+documentation = "https://docs.rs/x64-static-linker"
+homepage = "https://github.com/Drumato/x64-static-linker"
+repository = "https://github.com/Drumato/x64-static-linker"
+readme = "README.md"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+elf-utilities = {version = "0.1.48"}
