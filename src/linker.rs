@@ -59,8 +59,9 @@ impl StaticLinker {
         let code_segment = self.init_code_segment();
         self.file.add_segment(code_segment);
 
-        let data_segment = self.init_data_segment();
-        self.file.add_segment(data_segment);
+        if let Some(data_segment) = self.init_data_segment() {
+            self.file.add_segment(data_segment);
+        }
     }
 
     fn update_ehdr(&mut self) {
@@ -276,7 +277,7 @@ impl StaticLinker {
         segment::Segment64::new(phdr)
     }
 
-    fn init_data_segment(&mut self) -> segment::Segment64 {
+    fn init_data_segment(&mut self) -> Option<segment::Segment64> {
         let mut phdr: segment::Phdr64 = Default::default();
 
         // 文字列データ -> PT_LOADに配置
@@ -293,7 +294,7 @@ impl StaticLinker {
         let rodata_section_opt = self.file.get_section(".rodata".to_string());
 
         if rodata_section_opt.is_none() {
-            panic!("not found .rodata section");
+            return None;
         }
 
         let rodata_binary_length = rodata_section_opt.unwrap().header.get_size();
@@ -303,6 +304,6 @@ impl StaticLinker {
 
         phdr.set_flags(segment::PF_R);
 
-        segment::Segment64::new(phdr)
+        Some(segment::Segment64::new(phdr))
     }
 }
