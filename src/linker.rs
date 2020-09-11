@@ -2,13 +2,14 @@ use elf_utilities::{segment, header, symbol};
 use std::io::BufWriter;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
+use crate::LinkOption;
 
 const PAGE_SIZE: u64 = 0x1000;
 const BASE_CODE_ADDRESS: u64 = 0x400000;
 const BASE_DATA_ADDRESS: u64 = 0x401000;
 
-pub fn static_link_with(obj_file: elf_utilities::file::ELF64){
-    let mut linker = StaticLinker{file: obj_file};
+pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption){
+    let mut linker = StaticLinker{file: obj_file, option: link_option};
     linker.init_phdrs();
 
     // パディングしたのでセクションのオフセットを変更する必要がある
@@ -51,7 +52,8 @@ pub fn static_link_with(obj_file: elf_utilities::file::ELF64){
 }
 
 struct StaticLinker {
-    file: elf_utilities::file::ELF64
+    file: elf_utilities::file::ELF64,
+    option: LinkOption,
 }
 
 impl StaticLinker {
@@ -123,7 +125,7 @@ impl StaticLinker {
                 match sym_type {
                     symbol::STT_FUNC => {
                         // スタートアップルーチンであればエントリポイントに指定
-                        if sym.compare_symbol_name("initialize".to_string()) {
+                        if sym.compare_symbol_name(self.option.entry_point.to_string()) {
                             ehdr_entry = BASE_CODE_ADDRESS + sym.get_value();
                         }
 

@@ -16,19 +16,6 @@ cargo build
 
 See **[documentation](https://docs.rs/x64_static_linker)**
 
-```rust
-use x64_static_linker;
-
-fn main() -> Result<(), Box<dyn std::error::Error>>{
-    // you can pass a file(or string).
-    let elf_builder = x64_static_linker::static_link_with("obj.o")?;
-    
-    elf_builder.generate_elf_file(0o644);
-
-    Ok(())
-}
-```
-
 ##  Dependencies
 
 - [Drumato/elf-utilities](https://github.com/Drumato/elf-utilities)
