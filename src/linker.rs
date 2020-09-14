@@ -5,7 +5,7 @@ const PAGE_SIZE: u64 = 0x1000;
 const BASE_CODE_ADDRESS: u64 = 0x400000;
 const BASE_DATA_ADDRESS: u64 = 0x401000;
 
-pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption) -> elf_utilities::file::ELF64{
+pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption) -> elf_utilities::file::ELF64Dumper {
     let mut linker = StaticLinker{file: obj_file, option: link_option};
     let segments = linker.initialize_segments();
     linker.file.set_segments(segments);
@@ -30,7 +30,7 @@ pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkO
 
     linker.update_ehdr();
 
-    linker.file
+    elf_utilities::file::ELF64Dumper::new(linker.file, 0o755)
 }
 
 struct StaticLinker {
