@@ -1,22 +1,21 @@
 use elf_utilities::{segment, header, symbol};
-use std::io::BufWriter;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use crate::LinkOption;
 
 const PAGE_SIZE: u64 = 0x1000;
 const BASE_CODE_ADDRESS: u64 = 0x400000;
 const BASE_DATA_ADDRESS: u64 = 0x401000;
 
-pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption){
+pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption) -> elf_utilities::file::ELF64{
     let mut linker = StaticLinker{file: obj_file, option: link_option};
-    linker.init_phdrs();
+    let segments = linker.initialize_segments();
+    linker.file.set_segments(segments);
 
     // パディングしたのでセクションのオフセットを変更する必要がある
-    // この段階で変更するのは，allocate_address_to_symbols() で セクションシンボル.st_valueを更新するため
+    // この段階で変更するのは，allocate_address_to_symbols() で,
+    // このセクションオフセットを用いてセクションシンボルのst_valueを更新するため
     linker.update_sections_offset();
 
-    // .textセクションをアラインのため0x00で埋める．
+    // NULLセクションをアラインのため0x00で埋める．
     // これはGCCもやっている方法
     linker.adding_null_byte_to(0);
 
@@ -31,24 +30,7 @@ pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkO
 
     linker.update_ehdr();
 
-    let bytes = linker.file.to_le_bytes();
-
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .mode(0o755)
-        .open("a.out")
-        .unwrap();
-    let mut writer = BufWriter::new(file);
-    match writer.write_all(&bytes) {
-        Ok(_) => (),
-        Err(e) => eprintln!("{}", e),
-    }
-    match writer.flush() {
-        Ok(_) => (),
-        Err(e) => eprintln!("{}", e),
-    }
+    linker.file
 }
 
 struct StaticLinker {
@@ -57,13 +39,14 @@ struct StaticLinker {
 }
 
 impl StaticLinker {
-    fn init_phdrs(&mut self) {
+    fn initialize_segments(&mut self) -> Vec<elf_utilities::segment::Segment64> {
+        let mut segments = Vec::new();
         let code_segment = self.init_code_segment();
-        self.file.add_segment(code_segment);
+        segments.push(code_segment);
 
-        if let Some(data_segment) = self.init_data_segment() {
-            self.file.add_segment(data_segment);
-        }
+        segments.extend(self.init_data_segment().iter());
+
+        segments
     }
 
     fn update_ehdr(&mut self) {
@@ -210,7 +193,9 @@ impl StaticLinker {
                         }
                     }
                 }
-                _ => panic!("unsupported relocation type -> {}", r_info),
+                _ => {
+                    eprintln!("unsupported relocation type -> {}", r_info);
+                },
             }
         }
     }
