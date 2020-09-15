@@ -5,6 +5,10 @@ x86_64 static linker
 
 ## Get Started
 
+```rust
+
+```
+
 ### How to use as an linker command
 
 ```

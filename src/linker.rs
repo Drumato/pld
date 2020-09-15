@@ -1,12 +1,18 @@
-use elf_utilities::{segment, header, symbol};
 use crate::LinkOption;
+use elf_utilities::{header, segment, symbol};
 
 const PAGE_SIZE: u64 = 0x1000;
 const BASE_CODE_ADDRESS: u64 = 0x400000;
 const BASE_DATA_ADDRESS: u64 = 0x401000;
 
-pub fn static_link_with(obj_file: elf_utilities::file::ELF64, link_option: LinkOption) -> elf_utilities::file::ELF64Dumper {
-    let mut linker = StaticLinker{file: obj_file, option: link_option};
+pub fn static_link_with(
+    obj_file: elf_utilities::file::ELF64,
+    link_option: LinkOption,
+) -> elf_utilities::file::ELF64Dumper {
+    let mut linker = StaticLinker {
+        file: obj_file,
+        option: link_option,
+    };
     let segments = linker.initialize_segments();
     linker.file.set_segments(segments);
 
@@ -64,20 +70,22 @@ impl StaticLinker {
     }
 
     fn add_null_byte_to_null_section(&mut self) {
-        // 0x00 をセクションに書き込む
-        let nodata_offset = self
-            .file
-            .get_section(".nodata".to_string())
-            .unwrap()
-            .header
-            .get_offset();
-
-        self.file
-            .add_null_bytes_to(5, PAGE_SIZE as usize * 2 - nodata_offset as usize);
-
-        if let Some(nodata_sct) = self.file.get_section_as_mut(".nodata".to_string()) {
-            nodata_sct.header.set_size(PAGE_SIZE * 2 - nodata_offset);
+        let nodata_sct = self.file.first_mut_section_by(|sct| sct.name == ".nodata");
+        if nodata_sct.is_none() {
+            return;
         }
+
+        // 0x00 をセクションに書き込む
+        let nodata_sct = nodata_sct.unwrap();
+        let nodata_offset = nodata_sct.header.get_offset();
+
+        let mut extra_bytes = vec![0x00; PAGE_SIZE as usize * 2 - nodata_offset as usize];
+        if nodata_sct.bytes.is_none() {
+            nodata_sct.bytes = Some(Vec::new());
+        }
+
+        nodata_sct.bytes.as_mut().unwrap().append(&mut extra_bytes);
+        nodata_sct.header.set_size(PAGE_SIZE * 2 - nodata_offset);
     }
 
     fn adding_null_byte_to(&mut self, sct_idx: usize) {
@@ -85,10 +93,14 @@ impl StaticLinker {
         // section-header の値は変えないので,どのセクションにも属さないバイナリを書き込む
         let pht_size = segment::Phdr64::size() * self.file.segment_number() as u16;
 
-        self.file.add_null_bytes_to(
-            sct_idx,
-            PAGE_SIZE as usize - header::Ehdr64::size() as usize - pht_size as usize,
-        );
+        let mut extra_bytes =
+            vec![0x00; PAGE_SIZE as usize - header::Ehdr64::size() as usize - pht_size as usize];
+
+        let section = self.file.get_mut_section_with_idx(sct_idx);
+        if section.bytes.is_none() {
+            section.bytes = Some(Vec::new());
+        }
+        section.bytes.as_mut().unwrap().append(&mut extra_bytes);
     }
 
     fn allocate_address_to_symbols(&mut self) -> elf_utilities::Elf64Addr {
@@ -96,10 +108,11 @@ impl StaticLinker {
         // symbol.st_value には ファイルオフセットが格納されているので，
         // BASE_CODE_ADDRESS + st_value -> メモリ上のアドレス，という感じになる
         let mut ehdr_entry: elf_utilities::Elf64Addr = 0;
-        let sections = self.file.get_sections();
+        let sections = self.file.clone_sections();
+        let entry_point = self.option.entry_point.to_string();
 
         // 各シンボルにアドレスを割り当て
-        if let Some(symtab_sct) = self.file.get_section_as_mut(".symtab".to_string()) {
+        if let Some(symtab_sct) = self.file.first_mut_section_by(|sct| sct.name == ".symtab") {
             let mut symbols = symtab_sct.symbols.as_ref().unwrap().clone();
 
             for sym in symbols.iter_mut() {
@@ -108,7 +121,7 @@ impl StaticLinker {
                 match sym_type {
                     symbol::STT_FUNC => {
                         // スタートアップルーチンであればエントリポイントに指定
-                        if sym.compare_symbol_name(self.option.entry_point.to_string()) {
+                        if sym.compare_by(|s| s.get_symbol_name().unwrap() == entry_point) {
                             ehdr_entry = BASE_CODE_ADDRESS + sym.get_value();
                         }
 
@@ -137,7 +150,7 @@ impl StaticLinker {
     fn resolve_relocation_symbols(&mut self) {
         let symbols = self
             .file
-            .get_section(".symtab".to_string())
+            .first_section_by(|sct| sct.name == ".symtab")
             .unwrap()
             .symbols
             .as_ref()
@@ -145,7 +158,7 @@ impl StaticLinker {
             .clone();
         let rela_symbols = self
             .file
-            .get_section(".rela.text".to_string())
+            .first_section_by(|sct| sct.name == ".rela.text")
             .unwrap()
             .rela_symbols
             .as_ref()
@@ -169,7 +182,7 @@ impl StaticLinker {
                     // アドレスをバイト列に変換,機械語に書き込むことでアドレス解決
                     for (idx, b) in string_offset.to_le_bytes().to_vec().iter().enumerate() {
                         if let Some(text_sct) =
-                        self.file.get_section_as_mut(".text".to_string())
+                            self.file.first_mut_section_by(|sct| sct.name == ".text")
                         {
                             text_sct.write_byte_to_index(*b, rela_sym.get_offset() as usize + idx);
                         }
@@ -187,7 +200,7 @@ impl StaticLinker {
                     // アドレスをバイト列に変換,機械語に書き込むことでアドレス解決
                     for (idx, b) in relative_offset.to_le_bytes().to_vec().iter().enumerate() {
                         if let Some(text_sct) =
-                        self.file.get_section_as_mut(".text".to_string())
+                            self.file.first_mut_section_by(|sct| sct.name == ".text")
                         {
                             text_sct.write_byte_to_index(*b, rela_sym.get_offset() as usize + idx);
                         }
@@ -195,7 +208,7 @@ impl StaticLinker {
                 }
                 _ => {
                     eprintln!("unsupported relocation type -> {}", r_info);
-                },
+                }
             }
         }
     }
@@ -246,7 +259,7 @@ impl StaticLinker {
         phdr.set_vaddr(BASE_CODE_ADDRESS);
         phdr.set_paddr(BASE_CODE_ADDRESS);
 
-        let text_section_opt = self.file.get_section(".text".to_string());
+        let text_section_opt = self.file.first_section_by(|sct| sct.name == ".text");
 
         if text_section_opt.is_none() {
             panic!("not found .text section");
@@ -278,7 +291,7 @@ impl StaticLinker {
         phdr.set_vaddr(BASE_DATA_ADDRESS);
         phdr.set_paddr(BASE_DATA_ADDRESS);
 
-        let rodata_section_opt = self.file.get_section(".rodata".to_string());
+        let rodata_section_opt = self.file.first_section_by(|sct| sct.name == ".rodata");
 
         if rodata_section_opt.is_none() {
             return None;
