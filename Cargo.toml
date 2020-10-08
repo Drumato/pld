@@ -1,6 +1,6 @@
 [package]
 name = "x64_static_linker"
-version = "0.1.42"
+version = "0.1.43"
 authors = ["Drumato <drumatech109@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -14,4 +14,4 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-elf-utilities = {version = "0.1.56"}
+elf-utilities = {version = "0.1.73"}

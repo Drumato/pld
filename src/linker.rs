@@ -14,7 +14,7 @@ pub fn static_link_with(
         option: link_option,
     };
     let segments = linker.initialize_segments();
-    linker.file.set_segments(segments);
+    linker.file.segments = segments;
 
     // パディングしたのでセクションのオフセットを変更する必要がある
     // この段階で変更するのは，allocate_address_to_symbols() で,
@@ -36,7 +36,7 @@ pub fn static_link_with(
 
     linker.update_ehdr();
 
-    elf_utilities::file::ELF64Dumper::new(linker.file, 0o755)
+    elf_utilities::file::ELF64Dumper::new(linker.file)
 }
 
 struct StaticLinker {
@@ -57,16 +57,16 @@ impl StaticLinker {
 
     fn update_ehdr(&mut self) {
         let all_section_size = self.file.all_section_size();
-        let segment_number = self.file.segment_number();
-        let ehdr = self.file.get_ehdr_as_mut();
+        let segment_number = self.file.sections.len();
+        let ehdr = &mut self.file.ehdr;
 
-        ehdr.set_elf_type(header::ELFTYPE::EXEC);
+        ehdr.set_elf_type(header::Type::Exec);
 
-        ehdr.set_phoff(header::Ehdr64::size() as u64);
-        ehdr.set_phnum(segment_number as u16);
-        ehdr.set_phentsize(segment::Phdr64::size());
+        ehdr.e_phoff = header::Ehdr64::size() as u64;
+        ehdr.e_phnum = segment_number as u16;
+        ehdr.e_phentsize = segment::Phdr64::size();
 
-        ehdr.set_shoff(PAGE_SIZE + all_section_size);
+        ehdr.e_shoff = PAGE_SIZE + all_section_size;
     }
 
     fn add_null_byte_to_null_section(&mut self) {
@@ -77,7 +77,7 @@ impl StaticLinker {
 
         // 0x00 をセクションに書き込む
         let nodata_sct = nodata_sct.unwrap();
-        let nodata_offset = nodata_sct.header.get_offset();
+        let nodata_offset = nodata_sct.header.sh_offset;
 
         let mut extra_bytes = vec![0x00; PAGE_SIZE as usize * 2 - nodata_offset as usize];
         if nodata_sct.bytes.is_none() {
@@ -85,18 +85,18 @@ impl StaticLinker {
         }
 
         nodata_sct.bytes.as_mut().unwrap().append(&mut extra_bytes);
-        nodata_sct.header.set_size(PAGE_SIZE * 2 - nodata_offset);
+        nodata_sct.header.sh_size = PAGE_SIZE * 2 - nodata_offset;
     }
 
     fn adding_null_byte_to(&mut self, sct_idx: usize) {
         // 0x00を セクションに書き込む
         // section-header の値は変えないので,どのセクションにも属さないバイナリを書き込む
-        let pht_size = segment::Phdr64::size() * self.file.segment_number() as u16;
+        let pht_size: usize = segment::Phdr64::size() as usize * self.file.segments.len();
 
         let mut extra_bytes =
             vec![0x00; PAGE_SIZE as usize - header::Ehdr64::size() as usize - pht_size as usize];
 
-        let section = self.file.get_mut_section_with_idx(sct_idx);
+        let section = &mut self.file.sections[sct_idx];
         if section.bytes.is_none() {
             section.bytes = Some(Vec::new());
         }
@@ -108,7 +108,7 @@ impl StaticLinker {
         // symbol.st_value には ファイルオフセットが格納されているので，
         // BASE_CODE_ADDRESS + st_value -> メモリ上のアドレス，という感じになる
         let mut ehdr_entry: elf_utilities::Elf64Addr = 0;
-        let sections = self.file.clone_sections();
+        let sections = self.file.sections.clone();
         let entry_point = self.option.entry_point.to_string();
 
         // 各シンボルにアドレスを割り当て
@@ -119,22 +119,22 @@ impl StaticLinker {
                 let sym_type = sym.get_type();
 
                 match sym_type {
-                    symbol::STT_FUNC => {
+                    symbol::Type::Func => {
                         // スタートアップルーチンであればエントリポイントに指定
-                        if sym.compare_by(|s| s.get_symbol_name().unwrap() == entry_point) {
-                            ehdr_entry = BASE_CODE_ADDRESS + sym.get_value();
+                        if sym.compare_by(|s| s.symbol_name.as_ref().unwrap() == &entry_point) {
+                            ehdr_entry = BASE_CODE_ADDRESS + sym.st_value;
                         }
 
                         // 相対オフセットを追加する
-                        sym.set_value(sym.get_value() + BASE_CODE_ADDRESS);
+                        sym.st_value += BASE_CODE_ADDRESS;
                     }
-                    symbol::STT_SECTION => {
+                    symbol::Type::Section => {
                         // ロード先のアドレスを格納しておく
-                        let related_section_index = sym.get_shndx() as usize;
+                        let related_section_index = sym.st_shndx as usize;
                         let related_section_address =
-                            sections[related_section_index].header.get_addr();
+                            sections[related_section_index].header.sh_addr;
 
-                        sym.set_value(related_section_address);
+                        sym.st_value = related_section_address;
                     }
                     _ => {}
                 }
@@ -176,7 +176,7 @@ impl StaticLinker {
                     // rodataのオフセット + r_offsetでうまくいく
                     // セクションシンボルには allocate_address_to_symbols で予めセクションオフセットが入っている
                     let related_symbol_index = rela_sym.get_sym() as usize;
-                    let rodata_offset = symbols[related_symbol_index].get_value() as i32;
+                    let rodata_offset = symbols[related_symbol_index].st_value as i32;
                     let string_offset = rodata_offset + rela_sym.get_addend() as i32;
 
                     // アドレスをバイト列に変換,機械語に書き込むことでアドレス解決
@@ -192,7 +192,7 @@ impl StaticLinker {
                 elf_utilities::relocation::R_X86_64_PLT32 => {
                     // Relaオブジェクトに対応するシンボルテーブルエントリからアドレスを取り出す
                     let related_symbol_index = rela_sym.get_sym() as usize;
-                    let sym_address = symbols[related_symbol_index].get_value() as i32;
+                    let sym_address = symbols[related_symbol_index].st_value as i32;
                     let relative_offset =
                         sym_address - BASE_CODE_ADDRESS as i32 - rela_sym.get_offset() as i32
                             + rela_sym.get_addend() as i32;
@@ -216,48 +216,47 @@ impl StaticLinker {
     fn update_sections_offset(&mut self) {
         let mut extra_bytes = 0x00;
 
-        for (i, sct) in self.file.iter_sections_as_mut().enumerate() {
+        for (i, sct) in self.file.sections.iter_mut().enumerate() {
             let is_text_sct = sct.name == ".text";
             let is_rodata_sct = sct.name == ".rodata";
 
             let update_offset = if i < 6 {
-                PAGE_SIZE - header::Ehdr64::size() as u64 + sct.header.get_offset()
+                PAGE_SIZE - header::Ehdr64::size() as u64 + sct.header.sh_offset
             } else {
                 // .rodataの後ろならさらにパディングされている
                 let updated = PAGE_SIZE * 2 + extra_bytes;
-                extra_bytes += sct.header.get_size();
+                extra_bytes += sct.header.sh_size;
 
                 updated
             };
 
-            sct.header.set_offset(update_offset);
+            sct.header.sh_offset = update_offset;
 
             if is_text_sct {
-                sct.header.set_addr(BASE_CODE_ADDRESS);
+                sct.header.sh_addr = BASE_CODE_ADDRESS;
             } else if is_rodata_sct {
-                sct.header.set_addr(BASE_DATA_ADDRESS);
+                sct.header.sh_addr = BASE_DATA_ADDRESS;
             }
         }
     }
 
     fn update_entry_point(&mut self, entry: elf_utilities::Elf64Addr) {
-        let ehdr = self.file.get_ehdr_as_mut();
-        ehdr.set_entry(entry);
+        self.file.ehdr.e_entry = entry;
     }
 
     fn init_code_segment(&mut self) -> segment::Segment64 {
         let mut phdr: segment::Phdr64 = Default::default();
 
         // 機械語命令 -> PT_LOADに配置
-        phdr.set_type(segment::TYPE::LOAD);
+        phdr.set_type(segment::Type::Load);
 
         // Linux環境ではページサイズアラインされている必要あり
-        phdr.set_offset(PAGE_SIZE);
-        phdr.set_align(PAGE_SIZE);
+        phdr.p_offset = PAGE_SIZE;
+        phdr.p_align = PAGE_SIZE;
 
         // 決め打ちしたアドレスにロード
-        phdr.set_vaddr(BASE_CODE_ADDRESS);
-        phdr.set_paddr(BASE_CODE_ADDRESS);
+        phdr.p_vaddr = BASE_CODE_ADDRESS;
+        phdr.p_paddr = BASE_CODE_ADDRESS;
 
         let text_section_opt = self.file.first_section_by(|sct| sct.name == ".text");
 
@@ -265,14 +264,13 @@ impl StaticLinker {
             panic!("not found .text section");
         }
 
-        let text_binary_length = text_section_opt.unwrap().header.get_size();
+        let text_binary_length = text_section_opt.unwrap().header.sh_size;
 
         // .bssではないので filesz/memsz は同じ
-        phdr.set_filesz(text_binary_length);
-        phdr.set_memsz(text_binary_length);
+        phdr.p_filesz = text_binary_length;
+        phdr.p_memsz = text_binary_length;
 
-        // フラグを立てておく
-        phdr.set_flags(segment::PF_R);
+        phdr.p_flags = segment::PF_R;
 
         segment::Segment64::new(phdr)
     }
@@ -281,15 +279,15 @@ impl StaticLinker {
         let mut phdr: segment::Phdr64 = Default::default();
 
         // 文字列データ -> PT_LOADに配置
-        phdr.set_type(segment::TYPE::LOAD);
+        phdr.set_type(segment::Type::Load);
 
         // Linux環境ではページサイズアラインされている必要あり
-        phdr.set_offset(PAGE_SIZE * 2);
-        phdr.set_align(PAGE_SIZE);
+        phdr.p_offset = PAGE_SIZE * 2;
+        phdr.p_align = PAGE_SIZE;
 
         // 決め打ちしたアドレスにロード
-        phdr.set_vaddr(BASE_DATA_ADDRESS);
-        phdr.set_paddr(BASE_DATA_ADDRESS);
+        phdr.p_vaddr = BASE_DATA_ADDRESS;
+        phdr.p_paddr = BASE_DATA_ADDRESS;
 
         let rodata_section_opt = self.file.first_section_by(|sct| sct.name == ".rodata");
 
@@ -297,12 +295,12 @@ impl StaticLinker {
             return None;
         }
 
-        let rodata_binary_length = rodata_section_opt.unwrap().header.get_size();
+        let rodata_binary_length = rodata_section_opt.unwrap().header.sh_size;
         // .bssではないので， filesz/memsz は同じ
-        phdr.set_filesz(rodata_binary_length);
-        phdr.set_memsz(rodata_binary_length);
+        phdr.p_filesz = rodata_binary_length;
+        phdr.p_memsz = rodata_binary_length;
 
-        phdr.set_flags(segment::PF_R);
+        phdr.p_flags = segment::PF_R;
 
         Some(segment::Segment64::new(phdr))
     }
