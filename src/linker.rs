@@ -57,7 +57,7 @@ impl StaticLinker {
 
     fn update_ehdr(&mut self) {
         let all_section_size = self.file.all_section_size();
-        let segment_number = self.file.sections.len();
+        let segment_number = self.file.segments.len();
         let ehdr = &mut self.file.ehdr;
 
         ehdr.set_elf_type(header::Type::Exec);
