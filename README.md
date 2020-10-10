@@ -1,6 +1,6 @@
-[![x64_static_linker at crates.io](https://img.shields.io/crates/v/x64-static-linker.svg)](https://crates.io/crates/x64-static-linker)  [![x64_static_linker at docs.rs](https://docs.rs/x64-static_linker/badge.svg)](https://docs.rs/x64-static-linker)
+[![pld at crates.io](https://img.shields.io/crates/v/pld.svg)](https://crates.io/crates/pld)  [![pld at docs.rs](https://docs.rs/pld/badge.svg)](https://docs.rs/pld)
 
-# x64_static_linker
+# pld
 x86_64 static linker
 
 ## Get Started
@@ -13,12 +13,12 @@ x86_64 static linker
 
 ```
 cargo build
-./target/debug/x64_static_linker <object-file>
+./target/debug/pld <object-file>
 ```
 
 ### How to use as a Rust crate
 
-See **[documentation](https://docs.rs/x64_static_linker)**
+See **[documentation](https://docs.rs/pld)**
 
 ##  Dependencies
 
